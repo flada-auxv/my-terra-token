@@ -1,18 +1,21 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "State",
+  "title": "Config",
   "type": "object",
   "required": [
-    "count",
-    "owner"
+    "name",
+    "owner",
+    "symbol"
   ],
   "properties": {
-    "count": {
-      "type": "integer",
-      "format": "int32"
+    "name": {
+      "type": "string"
     },
     "owner": {
       "$ref": "#/definitions/CanonicalAddr"
+    },
+    "symbol": {
+      "type": "string"
     }
   },
   "definitions": {

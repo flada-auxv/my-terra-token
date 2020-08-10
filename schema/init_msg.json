@@ -3,12 +3,45 @@
   "title": "InitMsg",
   "type": "object",
   "required": [
-    "count"
+    "initial_balances",
+    "name",
+    "symbol"
   ],
   "properties": {
-    "count": {
-      "type": "integer",
-      "format": "int32"
+    "initial_balances": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/InitialBalance"
+      }
+    },
+    "name": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "HumanAddr": {
+      "type": "string"
+    },
+    "InitialBalance": {
+      "type": "object",
+      "required": [
+        "address",
+        "amount"
+      ],
+      "properties": {
+        "address": {
+          "$ref": "#/definitions/HumanAddr"
+        },
+        "amount": {
+          "$ref": "#/definitions/Uint128"
+        }
+      }
+    },
+    "Uint128": {
+      "type": "string"
     }
   }
 }
