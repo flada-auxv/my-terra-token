@@ -1,27 +1,48 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct InitMsg {
-    pub count: i32,
+use cosmwasm_std::{HumanAddr, Uint128};
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+pub struct InitialBalance {
+    pub address: HumanAddr,
+    pub amount: Uint128,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct InitMsg {
+    pub name: String,
+    pub symbol: String,
+    pub initial_balances: Vec<InitialBalance>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleMsg {
-    Increment {},
-    Reset { count: i32 },
+    Transfer {
+        recipient: HumanAddr,
+        amount: Uint128,
+    },
+    Burn {
+        amount: Uint128,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
-    // GetCount returns the current count as a json-encoded number
-    GetCount {},
+    Balance { address: HumanAddr },
+    Config {},
 }
 
-// We define a custom struct for each query response
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct CountResponse {
-    pub count: i32,
+#[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+pub struct BalanceResponse {
+    pub balance: Uint128,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+pub struct ConfigResponse {
+    pub name: String,
+    pub symbol: String,
+    pub owner: HumanAddr,
 }

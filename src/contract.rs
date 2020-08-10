@@ -1,22 +1,29 @@
 use cosmwasm_std::{
-    to_binary, Api, Binary, Env, Extern, HandleResponse, InitResponse, Querier, StdError,
-    StdResult, Storage,
+    generic_err, log, to_binary, Api, Binary, Env, Extern, HandleResponse, HumanAddr, InitResponse,
+    Querier, StdResult, Storage, Uint128,
 };
 
-use crate::msg::{CountResponse, HandleMsg, InitMsg, QueryMsg};
-use crate::state::{config, config_read, State};
+use crate::msg::{BalanceResponse, ConfigResponse, HandleMsg, InitMsg, QueryMsg};
+use crate::state::{balance_get, balance_set, config_get, config_set, Config};
 
 pub fn init<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
     msg: InitMsg,
 ) -> StdResult<InitResponse> {
-    let state = State {
-        count: msg.count,
-        owner: deps.api.canonical_address(&env.message.sender)?,
-    };
-
-    config(&mut deps.storage).save(&state)?;
+    // Initial balances
+    for row in msg.initial_balances {
+        let address = deps.api.canonical_address(&row.address)?;
+        balance_set(&mut deps.storage, &address, &row.amount)?;
+    }
+    config_set(
+        &mut deps.storage,
+        &Config {
+            name: msg.name,
+            symbol: msg.symbol,
+            owner: env.message.sender,
+        },
+    )?;
 
     Ok(InitResponse::default())
 }
@@ -27,37 +34,82 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
     msg: HandleMsg,
 ) -> StdResult<HandleResponse> {
     match msg {
-        HandleMsg::Increment {} => try_increment(deps, env),
-        HandleMsg::Reset { count } => try_reset(deps, env, count),
+        HandleMsg::Transfer { recipient, amount } => try_transfer(deps, env, &recipient, &amount),
+        HandleMsg::Burn { amount } => try_burn(deps, env, &amount),
     }
 }
 
-pub fn try_increment<S: Storage, A: Api, Q: Querier>(
-    deps: &mut Extern<S, A, Q>,
-    _env: Env,
-) -> StdResult<HandleResponse> {
-    config(&mut deps.storage).update(|mut state| {
-        state.count += 1;
-        Ok(state)
-    })?;
-
-    Ok(HandleResponse::default())
-}
-
-pub fn try_reset<S: Storage, A: Api, Q: Querier>(
+fn try_transfer<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
-    count: i32,
+    recipient: &HumanAddr,
+    amount: &Uint128,
 ) -> StdResult<HandleResponse> {
-    let api = &deps.api;
-    config(&mut deps.storage).update(|mut state| {
-        if api.canonical_address(&env.message.sender)? != state.owner {
-            return Err(StdError::unauthorized());
-        }
-        state.count = count;
-        Ok(state)
-    })?;
-    Ok(HandleResponse::default())
+    // canonical address
+    let sender_address = &env.message.sender;
+    let recipient_address = &deps.api.canonical_address(recipient)?;
+
+    // check that sender's funds covers
+    let mut sender_balance = balance_get(&deps.storage, sender_address);
+    if sender_balance < *amount {
+        return Err(generic_err(format!(
+            "Insufficient funds to send: balance={}, required={}",
+            sender_balance, amount
+        )));
+    }
+    // update balances
+    sender_balance = (sender_balance - *amount)?;
+    let mut recipient_balance = balance_get(&deps.storage, recipient_address);
+    recipient_balance = recipient_balance + *amount;
+
+    balance_set(&mut deps.storage, sender_address, &sender_balance)?;
+    balance_set(&mut deps.storage, recipient_address, &recipient_balance)?;
+
+    // report what happened in the log
+    let res = HandleResponse {
+        messages: vec![],
+        log: vec![
+            log("action", "send"),
+            log("sender", deps.api.human_address(sender_address)?),
+            log("recipient", recipient),
+            log("amount", amount),
+        ],
+        data: None,
+    };
+
+    Ok(res)
+}
+
+fn try_burn<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    amount: &Uint128,
+) -> StdResult<HandleResponse> {
+    // canonical address
+    let sender_address = &env.message.sender;
+
+    let mut sender_balance = balance_get(&deps.storage, sender_address);
+    if sender_balance < *amount {
+        return Err(generic_err(format!(
+            "Insufficient funds to burn: balance={}, required={}",
+            sender_balance, amount
+        )));
+    }
+    // update balance
+    sender_balance = (sender_balance - *amount)?;
+    balance_set(&mut deps.storage, sender_address, &sender_balance)?;
+
+    let res = HandleResponse {
+        messages: vec![],
+        log: vec![
+            log("action", "burn"),
+            log("sender", deps.api.human_address(sender_address)?),
+            log("amount", amount),
+        ],
+        data: None,
+    };
+
+    Ok(res)
 }
 
 pub fn query<S: Storage, A: Api, Q: Querier>(
@@ -65,82 +117,20 @@ pub fn query<S: Storage, A: Api, Q: Querier>(
     msg: QueryMsg,
 ) -> StdResult<Binary> {
     match msg {
-        QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
-    }
-}
-
-fn query_count<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) -> StdResult<CountResponse> {
-    let state = config_read(&deps.storage).load()?;
-    Ok(CountResponse { count: state.count })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cosmwasm_std::testing::{mock_dependencies, mock_env};
-    use cosmwasm_std::{coins, from_binary, StdError};
-
-    #[test]
-    fn proper_initialization() {
-        let mut deps = mock_dependencies(20, &[]);
-
-        let msg = InitMsg { count: 17 };
-        let env = mock_env("creator", &coins(1000, "earth"));
-
-        // we can just call .unwrap() to assert this was a success
-        let res = init(&mut deps, env, msg).unwrap();
-        assert_eq!(0, res.messages.len());
-
-        // it worked, let's query the state
-        let res = query(&deps, QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(17, value.count);
-    }
-
-    #[test]
-    fn increment() {
-        let mut deps = mock_dependencies(20, &coins(2, "token"));
-
-        let msg = InitMsg { count: 17 };
-        let env = mock_env("creator", &coins(2, "token"));
-        let _res = init(&mut deps, env, msg).unwrap();
-
-        // beneficiary can release it
-        let env = mock_env("anyone", &coins(2, "token"));
-        let msg = HandleMsg::Increment {};
-        let _res = handle(&mut deps, env, msg).unwrap();
-
-        // should increase counter by 1
-        let res = query(&deps, QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(18, value.count);
-    }
-
-    #[test]
-    fn reset() {
-        let mut deps = mock_dependencies(20, &coins(2, "token"));
-
-        let msg = InitMsg { count: 17 };
-        let env = mock_env("creator", &coins(2, "token"));
-        let _res = init(&mut deps, env, msg).unwrap();
-
-        // beneficiary can release it
-        let unauth_env = mock_env("anyone", &coins(2, "token"));
-        let msg = HandleMsg::Reset { count: 5 };
-        let res = handle(&mut deps, unauth_env, msg);
-        match res {
-            Err(StdError::Unauthorized { .. }) => {}
-            _ => panic!("Must return unauthorized error"),
+        QueryMsg::Balance { address } => {
+            let address = deps.api.canonical_address(&address)?;
+            let balance = balance_get(&deps.storage, &address);
+            let out = to_binary(&BalanceResponse { balance })?;
+            Ok(out)
         }
-
-        // only the original creator can reset the counter
-        let auth_env = mock_env("creator", &coins(2, "token"));
-        let msg = HandleMsg::Reset { count: 5 };
-        let _res = handle(&mut deps, auth_env, msg).unwrap();
-
-        // should now be 5
-        let res = query(&deps, QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(5, value.count);
+        QueryMsg::Config {} => {
+            let config = config_get(&deps.storage)?;
+            let out = to_binary(&ConfigResponse {
+                name: config.name,
+                symbol: config.symbol,
+                owner: deps.api.human_address(&config.owner)?,
+            })?;
+            Ok(out)
+        }
     }
 }
